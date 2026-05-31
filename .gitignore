@@ -1,0 +1,14 @@
+# Binaries
+auth-log-analyzer
+*.exe
+
+# Env
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
