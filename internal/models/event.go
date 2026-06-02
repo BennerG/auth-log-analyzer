@@ -49,13 +49,13 @@ type SuspiciousIP struct {
 	IPAddress   string    `db:"ip_address"   json:"ip_address"`
 	FailedCount int       `db:"failed_count" json:"failed_count"`
 	UniqueUsers int       `db:"unique_users" json:"unique_users"`
-	LastSeen    time.Time `db:"last_seen" json:"last_seen"`
+	LastSeen    time.Time `db:"last_seen" 	 json:"last_seen"`
 }
 
 type UserActivity struct {
-	UserID      string    `db:"user_id"     json:"user_id"`
-	EventCount  int       `db:"event_count" json:"event_count"`
+	UserID      string    `db:"user_id"      json:"user_id"`
+	EventCount  int       `db:"event_count"  json:"event_count"`
 	FailedCount int       `db:"failed_count" json:"failed_count"`
-	LastSeen    time.Time `db:"last_seen"   json:"last_seen"`
-	UniqueIPs   int       `db:"unique_ips"  json:"unique_ips"`
+	LastSeen    time.Time `db:"last_seen"    json:"last_seen"`
+	UniqueIPs   int       `db:"unique_ips"   json:"unique_ips"`
 }

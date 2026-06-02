@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,8 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BennerG/auth-log-analyzer/internal/api"
 	"github.com/BennerG/auth-log-analyzer/internal/config"
 	"github.com/BennerG/auth-log-analyzer/internal/db"
+	"github.com/BennerG/auth-log-analyzer/internal/service"
 )
 
 func main() {
@@ -27,14 +28,12 @@ func main() {
 	defer pool.Close()
 	log.Println("database connection pool established")
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, `{"status": "ok"}`)
-	})
+	svc := service.NewEventService(pool)
+	router := api.NewRouter(svc, cfg.APIKey)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      mux,
+		Handler:      router,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  10 * time.Second,
