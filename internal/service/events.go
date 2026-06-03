@@ -22,7 +22,7 @@ func (s *EventService) CreateEvent(ctx context.Context, req models.CreateEventRe
 	query := `
 		INSERT INTO auth_events (user_id, ip_address, event_type, status, user_agent, metadata)
 		VALUES ($1, $2::inet, $3, $4, $5, $6)
-		RETURNING id, user_id, ip_address::TEXT, event_type, status, user_agent, metadata, created_at
+		RETURNING id, user_id, host(ip_address), event_type, status, user_agent, metadata, created_at
 	`
 
 	var event models.AuthEvent
@@ -57,7 +57,7 @@ func (s *EventService) ListEvents(ctx context.Context, userID string, limit int)
 	}
 
 	query := `
-		SELECT id, user_id, ip_address::TEXT, event_type, status, user_agent, metadata, created_at
+		SELECT id, user_id, host(ip_address), event_type, status, user_agent, metadata, created_at
 		FROM auth_events
 		WHERE ($1 = '' OR user_id = $1)
 		ORDER BY created_at DESC
@@ -105,7 +105,7 @@ func (s *EventService) GetSuspiciousIPs(ctx context.Context, threshold int, sinc
 
 	query := `
 		SELECT
-			ip_address::TEXT,
+			host(ip_address),
 			COUNT(*)                                    AS failed_count,
 			COUNT(DISTINCT user_id)                     AS unique_users,
 			MAX(created_at)                             AS last_seen

@@ -136,6 +136,11 @@ curl "localhost:8080/analysis/user-activity?since_hours=48" \
   layer and enables subnet queries (`<<` operator) without application-level parsing.
   Requires `::TEXT` cast in `RETURNING` and `SELECT` clauses when scanning into Go
   strings via pgx.
+- `host(ip_address)` used instead of `ip_address::TEXT` in `RETURNING` and `SELECT`
+  clauses — Postgres normalizes `INET` values to include a CIDR prefix on cast
+  (e.g. `192.168.1.1` → `192.168.1.1/32`), which breaks string comparisons.
+  `host()` strips the prefix and returns just the address, keeping IP strings
+  clean for API consumers without requiring post-processing in Go.
 - `middleware.RealIP` removed after discovering CVE (GHSA-3fxj-6jh8-hvhx).
   Blind XFF trust enables IP spoofing. Production implementation should traverse
   XFF right-to-left against a known proxy allowlist.
