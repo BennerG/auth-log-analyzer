@@ -112,7 +112,7 @@ curl -X POST localhost:8080/events \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "user-123",
-    "ip_address": "192.168.1.3",
+    "ip_address": "192.168.1.1",
     "event_type": "failed_login",
     "status": "failure",
     "user_agent": "Mozilla/5.0"
@@ -128,6 +128,9 @@ curl "localhost:8080/analysis/suspicious-ips?threshold=1" \
 
 curl "localhost:8080/analysis/user-activity?since_hours=48" \
   -H "Authorization: Bearer dev-secret-key-change-in-prod"
+
+# Scrape Prometheus Metrics
+curl localhost:8080/metrics
 ```
 
 ## Design Descisions

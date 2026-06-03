@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/BennerG/auth-log-analyzer/internal/metrics"
 	"github.com/BennerG/auth-log-analyzer/internal/models"
 	"github.com/BennerG/auth-log-analyzer/internal/service"
 )
@@ -34,6 +35,12 @@ func (h *EventHandler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to create event"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Increment domain metric
+	metrics.AuthEventsIngested.WithLabelValues(
+		string(event.EventType),
+		string(event.Status),
+	).Inc()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
