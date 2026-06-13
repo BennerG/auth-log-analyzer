@@ -56,38 +56,24 @@ sequenceDiagram
 ### Setup
 
 ```bash
+# 1. clone the repo
 git clone https://github.com/BennerG/auth-log-analyzer.git
 cd auth-log-analyzer
-```
 
-Copy the example env file and configure your values:
-
-```bash
+# 2. Copy the example env file and configure your values:
 cp .env.example .env
-```
 
-Start the PostgreSQL and Redis containers:
-
-```bash
+# 3. Start the PostgreSQL and Redis containers:
 docker-compose up -d
-```
 
-Run the database migration:
-
-```bash
+# 4. Run the database migration:
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/auth_log_analyzer?sslmode=disable"
 make migrate
-```
 
-Start the server:
-
-```bash
+# 5. Start the server:
 make dev
-```
 
-You should see:
-
-```
+# You should see:
 INF database connection pool established
 INF server starting port=8080
 ```
@@ -200,7 +186,7 @@ curl "localhost:8080/analysis/user-activity?since_hours=48" \
 curl localhost:8080/metrics
 ```
 
-## Design Descisions
+## Design Decisions
 
 - PostgreSQL `INET` type used for `ip_address`. This type validates IP format at the DB
   layer and enables subnet queries (`<<` operator) without application-level parsing.
