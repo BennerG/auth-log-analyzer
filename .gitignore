@@ -1,5 +1,6 @@
 # Binaries
 auth-log-analyzer
+server
 *.exe
 
 # Env
