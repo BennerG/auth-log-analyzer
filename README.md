@@ -8,6 +8,7 @@ A Go REST API for ingesting and analyzing authentication events. Detects suspici
 - Detect suspicious IPs: failed login spikes above a configurable threshold across a time window
 - Summarize user activity: event counts, failure rates, and unique IPs per user
 - API key authentication middleware with clear 401/403 semantics
+- Per-IP sliding window rate limiting via Redis with configurable per-route limits and standard rate limit response headers
 - Prometheus metrics: HTTP request counts, latency histograms, and domain-level event counters
 - Structured JSON logging via zerolog (pretty-printed in development, JSON in production)
 - Raw SQL via pgx (no ORM) enabling full control over queries and indexes
@@ -35,8 +36,10 @@ and never reach the handler.
 ```mermaid
 sequenceDiagram
     Client->>Router: POST /events
-    Router->>Middleware: validate Bearer token
-    Middleware-->>Client: 401 if invalid
+    Router->>RateLimiter: check sliding window
+    RateLimiter-->>Client: 429 if limit exceeded
+    RateLimiter->>Middleware: pass through
+    Middleware-->>Client: 401 if invalid token
     Middleware->>Handler: authorized request
     Handler->>Service: CreateEvent()
     Service->>PostgreSQL: INSERT ... RETURNING
@@ -80,7 +83,7 @@ INF server starting port=8080
 
 ## API Reference
 
-### Authentication
+### Authentication and Rate Limiting
 
 All protected endppoints require a Bearer token in the `Authorization` header:
 
@@ -91,6 +94,25 @@ Authorization: Bearer <api-key>
 Incoming requests pass through an API Key middleware that extracts the token from the header and compares it against a static key loaded at server startup from the `API_KEY` environment variable.
 
 This is intentionally simple for a portfolio project. In production, you would replace the static key comparison with a lookup against a database or cache, where each key is scoped to a specific user or service, supports rotation, and can be revoked independently.
+
+Protected endpoints are rate limited per IP using a sliding window algorithm backed by Redis. Limits are configurable via environment variables.
+
+| Endpoint          | Limit       |
+| ----------------- | ----------- |
+| `POST /events`    | 30 req/min  |
+| `GET /events`     | 120 req/min |
+| `GET /analysis/*` | 30 req/min  |
+
+Rate limit headers are returned on every response:
+
+```
+X-RateLimit-Limit: 30
+X-RateLimit-Remaining: 17
+X-RateLimit-Reset: 1719043200
+Retry-After: 47  (429 responses only)
+```
+
+Requests pass through if Redis is unavailable (fail open).
 
 ### Endpoints
 
@@ -150,6 +172,27 @@ psql $DATABASE_URL -c "\d auth_events"
 psql $DATABASE_URL -c "SELECT * FROM auth_events"
 ```
 
+### Redis Test
+
+```bash
+# Fire 35 requests at POST /events to break the 30/min limit
+for i in $(seq 1 35); do
+  echo -n "Request $i: "
+  curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/events \
+    -H "Authorization: Bearer dev-secret-key-change-in-prod" \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":"user-123","ip_address":"192.168.1.1","event_type":"failed_login","status":"failure","user_agent":"Mozilla/5.0"}'
+  echo
+done
+
+# Send of single request and verify new headers
+curl -v -X POST http://localhost:8080/events \
+  -H "Authorization: Bearer dev-secret-key-change-in-prod" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"user-123","ip_address":"192.168.1.1","event_type":"failed_login","status":"failure","user_agent":"Mozilla/5.0"}' \
+  2>&1 | grep -E "X-RateLimit|Retry-After|< HTTP"
+```
+
 ### curl Commands
 
 ```bash
@@ -203,10 +246,10 @@ curl localhost:8080/metrics
 - zerolog chosen over the standard `log` package for structured, queryable JSON output
   in production and pretty-printed console output in development. The same logger
   utilizes different writers per environment. Zero allocations on the hot path.
+- Sliding window chosen over fixed window for rate limiting. Fixed window has a boundary exploit where a client can send 2x the limit by hitting the tail of one window and the head of the next. Sliding window via Redis sorted sets eliminates this. Each request is scored by timestamp, old entries are trimmed on every check, and the window moves continuously with time. All Redis commands run in a single pipeline to avoid multiple round trips per request.
 
 ## What's Next
 
-- **Rate limiting** — per-IP request throttling using Redis to complement the suspicious IP detection
 - **JWT authentication** — replace static API key with signed JWT tokens, scoped per user with expiry and revocation
 - **gRPC endpoint** — expose event ingestion and analysis via a gRPC API alongside the existing REST layer
 - **Alerting** — webhook or email notification when an IP crosses the suspicious threshold in real time

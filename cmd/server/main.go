@@ -13,6 +13,7 @@ import (
 	"github.com/BennerG/auth-log-analyzer/internal/db"
 	"github.com/BennerG/auth-log-analyzer/internal/logger"
 	"github.com/BennerG/auth-log-analyzer/internal/service"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
 
@@ -31,8 +32,24 @@ func main() {
 	defer pool.Close()
 	log.Info().Msg("database connection pool established")
 
+	opt, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid redis URL")
+	}
+	redisClient := redis.NewClient(opt)
+
+	redisCtx, redisCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer redisCancel()
+
+	if err := redisClient.Ping(redisCtx).Err(); err != nil {
+		log.Fatal().Err(err).Msg("failed to connect to redis")
+	}
+	defer redisClient.Close()
+	log.Info().Msg("redis connection established")
+
 	svc := service.NewEventService(pool)
-	router := api.NewRouter(svc, cfg.APIKey)
+
+	router := api.NewRouter(svc, cfg.APIKey, redisClient, cfg.RateLimitConfig())
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

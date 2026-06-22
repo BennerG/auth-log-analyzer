@@ -1,16 +1,20 @@
 package api
 
 import (
+	"time"
+
 	"github.com/BennerG/auth-log-analyzer/internal/api/handlers"
 	"github.com/BennerG/auth-log-analyzer/internal/auth"
 	"github.com/BennerG/auth-log-analyzer/internal/metrics"
+	"github.com/BennerG/auth-log-analyzer/internal/ratelimit"
 	"github.com/BennerG/auth-log-analyzer/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
-func NewRouter(svc *service.EventService, apiKey string) *chi.Mux {
+func NewRouter(svc *service.EventService, apiKey string, rdb *redis.Client, cfg RateLimitConfig) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -36,12 +40,18 @@ func NewRouter(svc *service.EventService, apiKey string) *chi.Mux {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.APIKeyMiddleware(apiKey))
 
-		r.Post("/events", eventHandler.CreateEvent)
-		r.Get("/events", eventHandler.ListEvents)
+		r.With(ratelimit.New(rdb, cfg.IngestLimit, time.Minute)).Post("/events", eventHandler.CreateEvent)
+		r.With(ratelimit.New(rdb, cfg.EventsLimit, time.Minute)).Get("/events", eventHandler.ListEvents)
 
-		r.Get("/analysis/suspicious-ips", analysisHandler.SuspiciousIPs)
-		r.Get("/analysis/user-activity", analysisHandler.UserActivity)
+		r.With(ratelimit.New(rdb, cfg.AnalysisLimit, time.Minute)).Get("/analysis/suspicious-ips", analysisHandler.SuspiciousIPs)
+		r.With(ratelimit.New(rdb, cfg.AnalysisLimit, time.Minute)).Get("/analysis/user-activity", analysisHandler.UserActivity)
 	})
 
 	return r
+}
+
+type RateLimitConfig struct {
+	IngestLimit   int
+	EventsLimit   int
+	AnalysisLimit int
 }
