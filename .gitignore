@@ -13,3 +13,6 @@ server
 
 # OS
 .DS_Store
+
+# Auth
+keys/

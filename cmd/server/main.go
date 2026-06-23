@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/BennerG/auth-log-analyzer/internal/api"
+	"github.com/BennerG/auth-log-analyzer/internal/auth"
 	"github.com/BennerG/auth-log-analyzer/internal/config"
 	"github.com/BennerG/auth-log-analyzer/internal/db"
 	"github.com/BennerG/auth-log-analyzer/internal/logger"
@@ -22,6 +23,20 @@ func main() {
 
 	logger.Init(cfg.Env)
 
+	// Load RSA keys before any network connections. Fatal early if keys are
+	// missing rather than discovering the problem on the first protected request.
+	privateKey, err := auth.LoadPrivateKey(cfg.JWTPrivateKeyPath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to load JWT private key")
+	}
+	log.Info().Str("path", cfg.JWTPrivateKeyPath).Msg("JWT private key loaded")
+
+	publicKey, err := auth.LoadPublicKey(cfg.JWTPublicKeyPath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to load JWT public key")
+	}
+	log.Info().Str("path", cfg.JWTPublicKeyPath).Msg("JWT public key loaded")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -32,6 +47,7 @@ func main() {
 	defer pool.Close()
 	log.Info().Msg("database connection pool established")
 
+	// Redis is used exclusively for per-IP rate limiting.
 	opt, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("invalid redis URL")
@@ -49,7 +65,16 @@ func main() {
 
 	svc := service.NewEventService(pool)
 
-	router := api.NewRouter(svc, cfg.APIKey, redisClient, cfg.RateLimitConfig())
+	router := api.NewRouter(
+		svc,
+		privateKey,
+		publicKey,
+		redisClient,
+		cfg.RateLimitConfig(),
+		cfg.AdminUsername,
+		cfg.AdminPassword,
+		cfg.JWTExpiry,
+	)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -59,6 +84,7 @@ func main() {
 		IdleTimeout:  10 * time.Second,
 	}
 
+	// graceful shutdown
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

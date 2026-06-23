@@ -7,7 +7,8 @@ A Go REST API for ingesting and analyzing authentication events. Detects suspici
 - Ingest authentication events via REST API (logins, logouts, token lifecycle, failed attempts)
 - Detect suspicious IPs: failed login spikes above a configurable threshold across a time window
 - Summarize user activity: event counts, failure rates, and unique IPs per user
-- API key authentication middleware with clear 401/403 semantics
+- RS256 JWT authentication with signed tokens containing sub, exp, iat, jti, and role claims
+- Token issuance via POST /auth/login with constant-time credential comparison to prevent timing attacks
 - Per-IP sliding window rate limiting via Redis with configurable per-route limits and standard rate limit response headers
 - Prometheus metrics: HTTP request counts, latency histograms, and domain-level event counters
 - Structured JSON logging via zerolog (pretty-printed in development, JSON in production)
@@ -35,12 +36,17 @@ and never reach the handler.
 
 ```mermaid
 sequenceDiagram
+    Client->>Router: POST /auth/login
+    Router->>AuthHandler: validate credentials
+    AuthHandler-->>Client: 401 if invalid
+    AuthHandler-->>Client: 200 with signed JWT
+
     Client->>Router: POST /events
     Router->>RateLimiter: check sliding window
     RateLimiter-->>Client: 429 if limit exceeded
-    RateLimiter->>Middleware: pass through
-    Middleware-->>Client: 401 if invalid token
-    Middleware->>Handler: authorized request
+    RateLimiter->>JWTMiddleware: pass through
+    JWTMiddleware-->>Client: 401 if invalid or expired token
+    JWTMiddleware->>Handler: verified claims in context
     Handler->>Service: CreateEvent()
     Service->>PostgreSQL: INSERT ... RETURNING
     PostgreSQL-->>Service: AuthEvent
@@ -85,15 +91,15 @@ INF server starting port=8080
 
 ### Authentication and Rate Limiting
 
-All protected endppoints require a Bearer token in the `Authorization` header:
+Protected endpoints require a signed JWT in the `Authorization` header:
 
 ```
-Authorization: Bearer <api-key>
+Authorization: Bearer <jwt>
 ```
 
-Incoming requests pass through an API Key middleware that extracts the token from the header and compares it against a static key loaded at server startup from the `API_KEY` environment variable.
+Tokens are issued at `POST /auth/login` and signed with RS256 using a 2048-bit RSA private key. Each token carries `sub`, `exp`, `iat`, `jti`, and `role` claims. The `jti` claim is a unique token ID included to support a future revocation store.
 
-This is intentionally simple for a portfolio project. In production, you would replace the static key comparison with a lookup against a database or cache, where each key is scoped to a specific user or service, supports rotation, and can be revoked independently.
+Tokens expire after 15 minutes by default, configurable via `JWT_EXPIRY`.
 
 Protected endpoints are rate limited per IP using a sliding window algorithm backed by Redis. Limits are configurable via environment variables.
 
@@ -122,10 +128,27 @@ All endpoints except `/health` and `/metrics` require an `Authorization: Bearer 
 | ------ | -------------------------- | -------- | ----------------------------------------------- |
 | GET    | `/health`                  | None     | Service health check                            |
 | GET    | `/metrics`                 | None     | Prometheus metrics scrape endpoint              |
+| POST   | `/auth/login`              | None     | Issue a signed RS256 JWT                        |
 | POST   | `/events`                  | Required | Ingest a new authentication event               |
 | GET    | `/events`                  | Required | List recent events, optionally filtered by user |
 | GET    | `/analysis/suspicious-ips` | Required | IPs with failed logins above threshold          |
 | GET    | `/analysis/user-activity`  | Required | Per-user event counts and failure rates         |
+
+#### POST `/auth/login`
+
+| Field      | Type   | Required | Description    |
+| ---------- | ------ | -------- | -------------- |
+| `username` | string | Yes      | Admin username |
+| `password` | string | Yes      | Admin password |
+
+Response:
+
+```json
+{
+  "token": "eyJhbGci...",
+  "expires_at": "2026-06-22T17:45:00Z"
+}
+```
 
 #### POST `/events`
 
@@ -179,7 +202,7 @@ psql $DATABASE_URL -c "SELECT * FROM auth_events"
 for i in $(seq 1 35); do
   echo -n "Request $i: "
   curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/events \
-    -H "Authorization: Bearer dev-secret-key-change-in-prod" \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"user_id":"user-123","ip_address":"192.168.1.1","event_type":"failed_login","status":"failure","user_agent":"Mozilla/5.0"}'
   echo
@@ -187,7 +210,7 @@ done
 
 # Send of single request and verify new headers
 curl -v -X POST http://localhost:8080/events \
-  -H "Authorization: Bearer dev-secret-key-change-in-prod" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user_id":"user-123","ip_address":"192.168.1.1","event_type":"failed_login","status":"failure","user_agent":"Mozilla/5.0"}' \
   2>&1 | grep -E "X-RateLimit|Retry-After|< HTTP"
@@ -199,31 +222,38 @@ curl -v -X POST http://localhost:8080/events \
 # Public — no auth needed
 curl localhost:8080/health
 
-# Missing auth — should return 401
+# Missing auth examples that return 401
 curl localhost:8080/events
 
-# Create an event
-curl -X POST localhost:8080/events \
-  -H "Authorization: Bearer dev-secret-key-change-in-prod" \
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/events
+
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/events \
+  -H "Authorization: Bearer thisisnotavalidtoken"
+
+# Simulate login and capture JWT
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "user-123",
-    "ip_address": "192.168.1.1",
-    "event_type": "failed_login",
-    "status": "failure",
-    "user_agent": "Mozilla/5.0"
-  }'
+  -d '{"username":"admin","password":"dev-password-change-in-prod"}' \
+  | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+
+echo $TOKEN
+
+# Create an event
+curl -s -X POST http://localhost:8080/events \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"user-123","ip_address":"192.168.1.1","event_type":"failed_login","status":"failure","user_agent":"Mozilla/5.0"}'
 
 # List events
 curl localhost:8080/events \
-  -H "Authorization: Bearer dev-secret-key-change-in-prod"
+  -H "Authorization: Bearer $TOKEN"
 
 # Analysis
 curl "localhost:8080/analysis/suspicious-ips?threshold=1" \
-  -H "Authorization: Bearer dev-secret-key-change-in-prod"
+  -H "Authorization: Bearer $TOKEN"
 
 curl "localhost:8080/analysis/user-activity?since_hours=48" \
-  -H "Authorization: Bearer dev-secret-key-change-in-prod"
+  -H "Authorization: Bearer $TOKEN"
 
 # Scrape Prometheus Metrics
 curl localhost:8080/metrics
@@ -247,10 +277,13 @@ curl localhost:8080/metrics
   in production and pretty-printed console output in development. The same logger
   utilizes different writers per environment. Zero allocations on the hot path.
 - Sliding window chosen over fixed window for rate limiting. Fixed window has a boundary exploit where a client can send 2x the limit by hitting the tail of one window and the head of the next. Sliding window via Redis sorted sets eliminates this. Each request is scored by timestamp, old entries are trimmed on every check, and the window moves continuously with time. All Redis commands run in a single pipeline to avoid multiple round trips per request.
+- RS256 chosen over HS256 for JWT signing. Asymmetric keys mean the verification key can be distributed publicly without exposing the signing key. This is the foundation of JWKS endpoints used in production identity providers and is directly relevant to certificate-based auth systems.
+- Constant-time credential comparison used in the login handler to prevent timing attacks. A naive string comparison returns early on the first mismatched byte, allowing an attacker to infer correct characters by measuring response latency across many requests. The constant-time implementation always iterates every byte regardless of where strings diverge.
 
 ## What's Next
 
-- **JWT authentication** — replace static API key with signed JWT tokens, scoped per user with expiry and revocation
+- **JWT revocation store** — Redis set of revoked jti values checked on every request, enabling token invalidation before expiry
+- **Rate limiting on POST /auth/login** — brute force protection on the login endpoint itself
 - **gRPC endpoint** — expose event ingestion and analysis via a gRPC API alongside the existing REST layer
 - **Alerting** — webhook or email notification when an IP crosses the suspicious threshold in real time
 - **XFF middleware** — production-safe `X-Forwarded-For` parsing traversing right-to-left against a known proxy allowlist, replacing the deprecated `middleware.RealIP`

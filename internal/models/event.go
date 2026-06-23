@@ -49,7 +49,7 @@ type SuspiciousIP struct {
 	IPAddress   string    `db:"ip_address"   json:"ip_address"`
 	FailedCount int       `db:"failed_count" json:"failed_count"`
 	UniqueUsers int       `db:"unique_users" json:"unique_users"`
-	LastSeen    time.Time `db:"last_seen" 	 json:"last_seen"`
+	LastSeen    time.Time `db:"last_seen"    json:"last_seen"`
 }
 
 type UserActivity struct {
