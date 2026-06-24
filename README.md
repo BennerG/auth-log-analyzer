@@ -259,6 +259,41 @@ curl "localhost:8080/analysis/user-activity?since_hours=48" \
 curl localhost:8080/metrics
 ```
 
+### grpcurl Commands
+
+```bash
+# Ingest new event
+grpcurl -plaintext -import-path proto -proto authlog/v1/authlog.proto \
+  -d '{"user_id": "user-234", "ip_address": "192.168.1.100", "event_type": "failed_login"}' \
+  localhost:9090 authlog.v1.AuthLogService/IngestEvent
+
+# Successful response
+# {
+#   "eventId": "42",
+#   "message": "event recorded"
+# }
+
+# Stream suspicious IPs
+grpcurl -plaintext -import-path proto -proto authlog/v1/authlog.proto \
+  -d '{"min_failures": 1}' \
+  localhost:9090 authlog.v1.AuthLogService/StreamSuspiciousIPs
+
+# Output streams as separate JSON objects
+# {
+#   "ipAddress": "172.16.0.99",
+#   "failureCount": 6,
+#   "uniqueUsers": 6,
+#   "lastSeen": "2026-06-23T10:21:24-07:00"
+# }
+# ⋮
+# {
+#   "ipAddress": "192.168.1.100",
+#   "failureCount": 1,
+#   "uniqueUsers": 1,
+#   "lastSeen": "2026-06-24T00:52:33-07:00"
+# }
+```
+
 ## Design Decisions
 
 - PostgreSQL `INET` type used for `ip_address`. This type validates IP format at the DB

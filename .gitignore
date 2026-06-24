@@ -16,3 +16,6 @@ server
 
 # Auth
 keys/
+
+# buf cache
+.buf/

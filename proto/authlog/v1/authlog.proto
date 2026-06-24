@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package authlog.v1;
+
+option go_package = "github.com/BennerG/auth-log-analyzer/gen/authlog/v1;authlogv1";
+
+// AuthLogService exposes event ingestion and security analysis via gRPC.
+service AuthLogService {
+  // IngestEvent records a single authentication event.
+  // Mirrors POST /events on the REST API.
+  rpc IngestEvent(IngestEventRequest) returns (IngestEventResponse);
+
+  // StreamSuspiciousIPs returns the current suspicious IP analysis as a stream.
+  // Each message is one suspicious IP entry. The stream closes when all results
+  // have been sent.
+  rpc StreamSuspiciousIPs(StreamSuspiciousIPsRequest) returns (stream StreamSuspiciousIPsResponse);
+}
+
+// IngestEventRequest carries the fields for a single auth event.
+message IngestEventRequest {
+  string user_id    = 1;
+  string ip_address = 2;
+  string event_type = 3; // "login_success" or "login_failure"
+  string timestamp  = 4; // RFC 3339 format
+}
+
+// IngestEventResponse confirms the event was recorded.
+message IngestEventResponse {
+  string event_id = 1; // assigned by the server
+  string message  = 2;
+}
+
+// StreamSuspiciousIPsRequest carries optional filter parameters.
+message StreamSuspiciousIPsRequest {
+  int32 min_failures = 1; // only return IPs with at least this many failures
+}
+
+// StreamSuspiciousIPsResponse is one entry in the suspicious IP stream.
+message StreamSuspiciousIPsResponse {
+  string ip_address    = 1;
+  int32  failure_count = 2;
+  int32 unique_users   = 3;
+  string last_seen     = 4; // RFC 3339
+}

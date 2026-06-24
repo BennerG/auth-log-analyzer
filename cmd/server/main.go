@@ -2,20 +2,24 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	authlogv1 "github.com/BennerG/auth-log-analyzer/gen/authlog/v1"
 	"github.com/BennerG/auth-log-analyzer/internal/api"
 	"github.com/BennerG/auth-log-analyzer/internal/auth"
 	"github.com/BennerG/auth-log-analyzer/internal/config"
 	"github.com/BennerG/auth-log-analyzer/internal/db"
+	grpcserver "github.com/BennerG/auth-log-analyzer/internal/grpc"
 	"github.com/BennerG/auth-log-analyzer/internal/logger"
 	"github.com/BennerG/auth-log-analyzer/internal/service"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -65,6 +69,7 @@ func main() {
 
 	svc := service.NewEventService(pool)
 
+	// REST server
 	router := api.NewRouter(
 		svc,
 		privateKey,
@@ -76,7 +81,7 @@ func main() {
 		cfg.JWTExpiry,
 	)
 
-	srv := &http.Server{
+	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      router,
 		ReadTimeout:  10 * time.Second,
@@ -84,24 +89,50 @@ func main() {
 		IdleTimeout:  10 * time.Second,
 	}
 
-	// graceful shutdown
+	// gRPC server
+	grpcLis, err := net.Listen("tcp", ":9090")
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to bind gRPC port 9090")
+	}
+
+	grpcSrv := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			grpcserver.UnaryLoggingInterceptor(log.Logger),
+		),
+		grpc.ChainStreamInterceptor(
+			grpcserver.StreamLoggingInterceptor(log.Logger),
+		),
+	)
+	authlogv1.RegisterAuthLogServiceServer(grpcSrv, grpcserver.NewServer(pool, log.Logger))
+
+	go func() {
+		log.Info().Str("port", "9090").Msg("gRPC server starting")
+		if err := grpcSrv.Serve(grpcLis); err != nil {
+			log.Fatal().Err(err).Msg("gRPC server error")
+		}
+	}()
+
+	// Graceful shutdown stops both servers with one signal
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		log.Info().Msg("shutdown signal received")
 
+		grpcSrv.GracefulStop()
+		log.Info().Msg("gRPC server stopped")
+
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()
 
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Fatal().Err(err).Msg("forced shutdown")
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			log.Fatal().Err(err).Msg("forced HTTP shutdown")
 		}
 	}()
 
-	log.Info().Str("port", cfg.Port).Msg("server starting")
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatal().Err(err).Msg("server error")
+	log.Info().Str("port", cfg.Port).Msg("HTTP server starting")
+	if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatal().Err(err).Msg("HTTP server error")
 	}
 	log.Info().Msg("server stopped")
 }
