@@ -98,9 +98,11 @@ func main() {
 	grpcSrv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			grpcserver.UnaryLoggingInterceptor(log.Logger),
+			auth.UnaryJWTInterceptor(publicKey),
 		),
 		grpc.ChainStreamInterceptor(
 			grpcserver.StreamLoggingInterceptor(log.Logger),
+			auth.StreamJWTInterceptor(publicKey),
 		),
 	)
 	authlogv1.RegisterAuthLogServiceServer(grpcSrv, grpcserver.NewServer(pool, log.Logger))

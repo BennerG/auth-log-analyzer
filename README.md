@@ -261,9 +261,12 @@ curl localhost:8080/metrics
 
 ### grpcurl Commands
 
+> Use the REST `POST /auth/login` endpoint to obtain updated `$TOKEN`
+
 ```bash
 # Ingest new event
 grpcurl -plaintext -import-path proto -proto authlog/v1/authlog.proto \
+  -H "authorization: Bearer $TOKEN" \
   -d '{"user_id": "user-234", "ip_address": "192.168.1.100", "event_type": "failed_login"}' \
   localhost:9090 authlog.v1.AuthLogService/IngestEvent
 
@@ -275,6 +278,7 @@ grpcurl -plaintext -import-path proto -proto authlog/v1/authlog.proto \
 
 # Stream suspicious IPs
 grpcurl -plaintext -import-path proto -proto authlog/v1/authlog.proto \
+  -H "authorization: Bearer $TOKEN" \
   -d '{"min_failures": 1}' \
   localhost:9090 authlog.v1.AuthLogService/StreamSuspiciousIPs
 
